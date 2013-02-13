@@ -153,15 +153,6 @@ func Restore(fd int, state *State) error {
         return err
 }
 
-var oldState *State
-
-func Fatal(err error) {
-	if oldState != nil {
-		Restore(0, oldState)
-	}
-	log.Fatal(err)
-}
-
 
 func main() {
 	if cmd := path.Base(os.Args[0]); cmd == "docker" {
@@ -172,20 +163,25 @@ func main() {
 				log.Fatal(err)
 			}
 		} else {
-			SimpleMode(os.Args[1:])
+			if err := SimpleMode(os.Args[1:]); err != nil {
+				log.Fatal(err)
+			}
 		}
 	} else {
-		SimpleMode(append([]string{cmd}, os.Args[1:]...))
+		if err := SimpleMode(append([]string{cmd}, os.Args[1:]...)); err != nil {
+			log.Fatal(err)
+		}
 	}
 }
 
 // Run docker in "simple mode": run a single command and return.
-func SimpleMode(args []string) {
+func SimpleMode(args []string) error {
+	var oldState *State
 	var err error
 	if IsTerminal(0) && os.Getenv("NORAW") == "" {
 		oldState, err = MakeRaw(0)
 		if err != nil {
-			panic(err)
+			return err
 		}
 		defer Restore(0, oldState)
 	}
@@ -195,7 +191,7 @@ func SimpleMode(args []string) {
 	// See http://code.google.com/p/go/issues/detail?id=3345
 	conn, err := rcli.Call("tcp", "127.0.0.1:4242", args...)
 	if err != nil {
-		Fatal(err)
+		return err
 	}
 	receive_stdout := future.Go(func() error {
 		_, err := io.Copy(os.Stdout, conn)
@@ -209,16 +205,17 @@ func SimpleMode(args []string) {
 		return err
 	})
 	if err := <-receive_stdout; err != nil {
-		Fatal(err)
+		return err
 	}
 	if oldState != nil {
 		Restore(0, oldState)
 	}
 	if !IsTerminal(0) {
 		if err := <-send_stdin; err != nil {
-			Fatal(err)
+			return err
 		}
 	}
+	return nil
 }
 
 // Run docker in "interactive mode": run a bash-compatible shell capable of running docker commands.
