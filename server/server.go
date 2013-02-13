@@ -1,4 +1,4 @@
-package main
+package server
 
 import (
 	"github.com/dotcloud/docker"
@@ -9,7 +9,6 @@ import (
 	"errors"
 	"log"
 	"io"
-	"flag"
 	"fmt"
 	"strings"
 	"text/tabwriter"
@@ -24,6 +23,15 @@ import (
 )
 
 const VERSION = "0.0.1"
+
+func (srv *Server) ListenAndServe() error {
+	go rcli.ListenAndServeHTTP("127.0.0.1:8080", srv)
+	// FIXME: we want to use unix sockets here, but net.UnixConn doesn't expose
+	// CloseWrite(), which we need to cleanly signal that stdin is closed without
+	// closing the connection.
+	// See http://code.google.com/p/go/issues/detail?id=3345
+	return rcli.ListenAndServe("tcp", "127.0.0.1:4242", srv)
+}
 
 func (srv *Server) Name() string {
 	return "docker"
@@ -769,28 +777,8 @@ func (srv *Server) CmdRun(stdin io.ReadCloser, stdout io.Writer, args ...string)
 	return nil
 }
 
-func main() {
-	future.Seed()
-	flag.Parse()
-	d, err := New()
-	if err != nil {
-		log.Fatal(err)
-	}
-	go func() {
-		if err := rcli.ListenAndServeHTTP("127.0.0.1:8080", d); err != nil {
-			log.Fatal(err)
-		}
-	}()
-	// FIXME: we want to use unix sockets here, but net.UnixConn doesn't expose
-	// CloseWrite(), which we need to cleanly signal that stdin is closed without
-	// closing the connection.
-	// See http://code.google.com/p/go/issues/detail?id=3345
-	if err := rcli.ListenAndServe("tcp", "127.0.0.1:4242", d); err != nil {
-		log.Fatal(err)
-	}
-}
-
 func New() (*Server, error) {
+	future.Seed()
 	images, err := image.New("/var/lib/docker/images")
 	if err != nil {
 		return nil, err
