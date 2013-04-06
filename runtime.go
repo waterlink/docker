@@ -31,6 +31,7 @@ type Runtime struct {
 	idIndex        *TruncIndex
 	capabilities   *Capabilities
 	kernelVersion  *KernelVersionInfo
+	volumes        *Graph
 }
 
 var sysInitPath string
@@ -312,13 +313,13 @@ func NewRuntime() (*Runtime, error) {
 		_, err2 := ioutil.ReadFile(path.Join(cgroupMemoryMountpoint, "memory.soft_limit_in_bytes"))
 		runtime.capabilities.MemoryLimit = err1 == nil && err2 == nil
 		if !runtime.capabilities.MemoryLimit {
-		   	log.Printf("WARNING: Your kernel does not support cgroup memory limit.")
+			log.Printf("WARNING: Your kernel does not support cgroup memory limit.")
 		}
 
 		_, err = ioutil.ReadFile(path.Join(cgroupMemoryMountpoint, "memory.memsw.limit_in_bytes"))
 		runtime.capabilities.SwapLimit = err == nil
 		if !runtime.capabilities.SwapLimit {
-		   	log.Printf("WARNING: Your kernel does not support cgroup swap limit.")
+			log.Printf("WARNING: Your kernel does not support cgroup swap limit.")
 		}
 	}
 	return runtime, nil
@@ -332,6 +333,10 @@ func NewRuntimeFromDirectory(root string) (*Runtime, error) {
 	}
 
 	g, err := NewGraph(path.Join(root, "graph"))
+	if err != nil {
+		return nil, err
+	}
+	volumes, err := NewGraph(path.Join(root, "volumes"))
 	if err != nil {
 		return nil, err
 	}
@@ -361,6 +366,7 @@ func NewRuntimeFromDirectory(root string) (*Runtime, error) {
 		authConfig:     authConfig,
 		idIndex:        NewTruncIndex(),
 		capabilities:   &Capabilities{},
+		volumes:        volumes,
 	}
 
 	if err := runtime.restore(); err != nil {
