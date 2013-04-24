@@ -1,0 +1,5 @@
+#!/bin/sh
+
+# Stop docker and remove it from the init sequence
+/etc/init.d/docker stop
+/usr/sbin/update-rc.d docker remove

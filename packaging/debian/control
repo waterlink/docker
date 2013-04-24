@@ -2,15 +2,15 @@ Source: lxc-docker
 Section: admin
 Priority: optional
 Maintainer: Daniel Mizyrycki <daniel@dotcloud.com>
-Build-Depends: debhelper (>= 9),autotools-dev,golang
-Standards-Version: 3.9.3
+Build-Depends: debhelper (>=9), autotools-dev, golang
+Standards-Version: 3.9.4
 Homepage: http://github.com/dotcloud/docker
 
 Package: lxc-docker
 Architecture: linux-any
-Depends: ${misc:Depends},${shlibs:Depends},lxc,bsdtar
+Depends: ${shlibs:Depends}, ${misc:Depends}, lxc, bsdtar
 Conflicts: docker
-Description: lxc-docker is a Linux container runtime
+Description: lxc-docker is a(n) lxc-docker is the Linux container runtime
  Docker complements LXC with a high-level API which operates at the process
  level. It runs unix processes with strong guarantees of isolation and
  repeatability across servers.

@@ -11,7 +11,6 @@
 ### END INIT INFO
 
 DOCKER=/usr/bin/docker
-PIDFILE=/var/run/docker.pid
 
 # Check docker is present
 [ -x $DOCKER ] || log_success_msg "Docker not present"
@@ -23,6 +22,7 @@ PIDFILE=/var/run/docker.pid
 case "$1" in
   start)
     log_begin_msg "Starting docker..."
+    mount | grep cgroup >/dev/null || mount -t cgroup none /sys/fs/cgroup
     start-stop-daemon --start --background --exec "$DOCKER" -- -d
     log_end_msg $?
     ;;
