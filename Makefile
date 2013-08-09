@@ -1,4 +1,4 @@
-DOCKER_PACKAGE := github.com/dotcloud/docker
+DOCKER_PACKAGE := github.com/waterlink/docker
 RELEASE_VERSION := $(shell git tag | grep -E "v[0-9\.]+$$" | sort -nr | head -n 1)
 SRCRELEASE := docker-$(RELEASE_VERSION)
 BINRELEASE := docker-$(RELEASE_VERSION).tgz
