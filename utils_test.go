@@ -1,263 +1,303 @@
 package docker
 
 import (
-	"bytes"
-	"errors"
+	"github.com/dotcloud/docker/utils"
 	"io"
 	"io/ioutil"
+	"os"
+	"path"
+	"strings"
 	"testing"
 )
 
-func TestBufReader(t *testing.T) {
-	reader, writer := io.Pipe()
-	bufreader := newBufReader(reader)
+// This file contains utility functions for docker's unit test suite.
+// It has to be named XXX_test.go, apparently, in other to access private functions
+// from other XXX_test.go functions.
 
-	// Write everything down to a Pipe
-	// Usually, a pipe should block but because of the buffered reader,
-	// the writes will go through
-	done := make(chan bool)
-	go func() {
-		writer.Write([]byte("hello world"))
-		writer.Close()
-		done <- true
-	}()
+// Create a temporary runtime suitable for unit testing.
+// Call t.Fatal() at the first error.
+func mkRuntime(f Fataler) *Runtime {
+	runtime, err := newTestRuntime()
+	if err != nil {
+		f.Fatal(err)
+	}
+	return runtime
+}
 
-	// Drain the reader *after* everything has been written, just to verify
-	// it is indeed buffering
-	<-done
-	output, err := ioutil.ReadAll(bufreader)
+// A common interface to access the Fatal method of
+// both testing.B and testing.T.
+type Fataler interface {
+	Fatal(args ...interface{})
+}
+
+func newTestRuntime() (*Runtime, error) {
+	root, err := ioutil.TempDir("", "docker-test")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Remove(root); err != nil {
+		return nil, err
+	}
+	if err := utils.CopyDirectory(unitTestStoreBase, root); err != nil {
+		return nil, err
+	}
+
+	runtime, err := NewRuntimeFromDirectory(root, false)
+	if err != nil {
+		return nil, err
+	}
+	runtime.UpdateCapabilities(true)
+	return runtime, nil
+}
+
+// Write `content` to the file at path `dst`, creating it if necessary,
+// as well as any missing directories.
+// The file is truncated if it already exists.
+// Call t.Fatal() at the first error.
+func writeFile(dst, content string, t *testing.T) {
+	// Create subdirectories if necessary
+	if err := os.MkdirAll(path.Dir(dst), 0700); err != nil && !os.IsExist(err) {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(dst, os.O_CREATE|os.O_RDWR|os.O_TRUNC, 0700)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(output, []byte("hello world")) {
-		t.Error(string(output))
+	// Write content (truncate if it exists)
+	if _, err := io.Copy(f, strings.NewReader(content)); err != nil {
+		t.Fatal(err)
 	}
 }
 
-type dummyWriter struct {
-	buffer      bytes.Buffer
-	failOnWrite bool
+// Return the contents of file at path `src`.
+// Call t.Fatal() at the first error (including if the file doesn't exist)
+func readFile(src string, t *testing.T) (content string) {
+	f, err := os.Open(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := ioutil.ReadAll(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
 }
 
-func (dw *dummyWriter) Write(p []byte) (n int, err error) {
-	if dw.failOnWrite {
-		return 0, errors.New("Fake fail")
-	}
-	return dw.buffer.Write(p)
-}
-
-func (dw *dummyWriter) String() string {
-	return dw.buffer.String()
-}
-
-func (dw *dummyWriter) Close() error {
-	return nil
-}
-
-func TestWriteBroadcaster(t *testing.T) {
-	writer := newWriteBroadcaster()
-
-	// Test 1: Both bufferA and bufferB should contain "foo"
-	bufferA := &dummyWriter{}
-	writer.AddWriter(bufferA)
-	bufferB := &dummyWriter{}
-	writer.AddWriter(bufferB)
-	writer.Write([]byte("foo"))
-
-	if bufferA.String() != "foo" {
-		t.Errorf("Buffer contains %v", bufferA.String())
-	}
-
-	if bufferB.String() != "foo" {
-		t.Errorf("Buffer contains %v", bufferB.String())
-	}
-
-	// Test2: bufferA and bufferB should contain "foobar",
-	// while bufferC should only contain "bar"
-	bufferC := &dummyWriter{}
-	writer.AddWriter(bufferC)
-	writer.Write([]byte("bar"))
-
-	if bufferA.String() != "foobar" {
-		t.Errorf("Buffer contains %v", bufferA.String())
-	}
-
-	if bufferB.String() != "foobar" {
-		t.Errorf("Buffer contains %v", bufferB.String())
-	}
-
-	if bufferC.String() != "bar" {
-		t.Errorf("Buffer contains %v", bufferC.String())
-	}
-
-	// Test3: Test removal
-	writer.RemoveWriter(bufferB)
-	writer.Write([]byte("42"))
-	if bufferA.String() != "foobar42" {
-		t.Errorf("Buffer contains %v", bufferA.String())
-	}
-	if bufferB.String() != "foobar" {
-		t.Errorf("Buffer contains %v", bufferB.String())
-	}
-	if bufferC.String() != "bar42" {
-		t.Errorf("Buffer contains %v", bufferC.String())
-	}
-
-	// Test4: Test eviction on failure
-	bufferA.failOnWrite = true
-	writer.Write([]byte("fail"))
-	if bufferA.String() != "foobar42" {
-		t.Errorf("Buffer contains %v", bufferA.String())
-	}
-	if bufferC.String() != "bar42fail" {
-		t.Errorf("Buffer contains %v", bufferC.String())
-	}
-	// Even though we reset the flag, no more writes should go in there
-	bufferA.failOnWrite = false
-	writer.Write([]byte("test"))
-	if bufferA.String() != "foobar42" {
-		t.Errorf("Buffer contains %v", bufferA.String())
-	}
-	if bufferC.String() != "bar42failtest" {
-		t.Errorf("Buffer contains %v", bufferC.String())
-	}
-
-	writer.CloseWriters()
-}
-
-type devNullCloser int
-
-func (d devNullCloser) Close() error {
-	return nil
-}
-
-func (d devNullCloser) Write(buf []byte) (int, error) {
-	return len(buf), nil
-}
-
-// This test checks for races. It is only useful when run with the race detector.
-func TestRaceWriteBroadcaster(t *testing.T) {
-	writer := newWriteBroadcaster()
-	c := make(chan bool)
-	go func() {
-		writer.AddWriter(devNullCloser(0))
-		c <- true
+// Create a test container from the given runtime `r` and run arguments `args`.
+// If the image name is "_", (eg. []string{"-i", "-t", "_", "bash"}, it is
+// dynamically replaced by the current test image.
+// The caller is responsible for destroying the container.
+// Call t.Fatal() at the first error.
+func mkContainer(r *Runtime, args []string, t *testing.T) (*Container, *HostConfig, error) {
+	config, hostConfig, _, err := ParseRun(args, nil)
+	defer func() {
+		if err != nil && t != nil {
+			t.Fatal(err)
+		}
 	}()
-	writer.Write([]byte("hello"))
-	<-c
+	if err != nil {
+		return nil, nil, err
+	}
+	if config.Image == "_" {
+		config.Image = GetTestImage(r).ID
+	}
+	c, err := NewBuilder(r).Create(config)
+	if err != nil {
+		return nil, nil, err
+	}
+	return c, hostConfig, nil
 }
 
-// Test the behavior of TruncIndex, an index for querying IDs from a non-conflicting prefix.
-func TestTruncIndex(t *testing.T) {
-	index := NewTruncIndex()
-	// Get on an empty index
-	if _, err := index.Get("foobar"); err == nil {
-		t.Fatal("Get on an empty index should return an error")
+// Create a test container, start it, wait for it to complete, destroy it,
+// and return its standard output as a string.
+// The image name (eg. the XXX in []string{"-i", "-t", "XXX", "bash"}, is dynamically replaced by the current test image.
+// If t is not nil, call t.Fatal() at the first error. Otherwise return errors normally.
+func runContainer(r *Runtime, args []string, t *testing.T) (output string, err error) {
+	defer func() {
+		if err != nil && t != nil {
+			t.Fatal(err)
+		}
+	}()
+	container, hostConfig, err := mkContainer(r, args, t)
+	if err != nil {
+		return "", err
 	}
-
-	// Spaces should be illegal in an id
-	if err := index.Add("I have a space"); err == nil {
-		t.Fatalf("Adding an id with ' ' should return an error")
+	defer r.Destroy(container)
+	stdout, err := container.StdoutPipe()
+	if err != nil {
+		return "", err
 	}
-
-	id := "99b36c2c326ccc11e726eee6ee78a0baf166ef96"
-	// Add an id
-	if err := index.Add(id); err != nil {
-		t.Fatal(err)
+	defer stdout.Close()
+	if err := container.Start(hostConfig); err != nil {
+		return "", err
 	}
-	// Get a non-existing id
-	assertIndexGet(t, index, "abracadabra", "", true)
-	// Get the exact id
-	assertIndexGet(t, index, id, id, false)
-	// The first letter should match
-	assertIndexGet(t, index, id[:1], id, false)
-	// The first half should match
-	assertIndexGet(t, index, id[:len(id)/2], id, false)
-	// The second half should NOT match
-	assertIndexGet(t, index, id[len(id)/2:], "", true)
-
-	id2 := id[:6] + "blabla"
-	// Add an id
-	if err := index.Add(id2); err != nil {
-		t.Fatal(err)
+	container.Wait()
+	data, err := ioutil.ReadAll(stdout)
+	if err != nil {
+		return "", err
 	}
-	// Both exact IDs should work
-	assertIndexGet(t, index, id, id, false)
-	assertIndexGet(t, index, id2, id2, false)
-
-	// 6 characters or less should conflict
-	assertIndexGet(t, index, id[:6], "", true)
-	assertIndexGet(t, index, id[:4], "", true)
-	assertIndexGet(t, index, id[:1], "", true)
-
-	// 7 characters should NOT conflict
-	assertIndexGet(t, index, id[:7], id, false)
-	assertIndexGet(t, index, id2[:7], id2, false)
-
-	// Deleting a non-existing id should return an error
-	if err := index.Delete("non-existing"); err == nil {
-		t.Fatalf("Deleting a non-existing id should return an error")
-	}
-
-	// Deleting id2 should remove conflicts
-	if err := index.Delete(id2); err != nil {
-		t.Fatal(err)
-	}
-	// id2 should no longer work
-	assertIndexGet(t, index, id2, "", true)
-	assertIndexGet(t, index, id2[:7], "", true)
-	assertIndexGet(t, index, id2[:11], "", true)
-
-	// conflicts between id and id2 should be gone
-	assertIndexGet(t, index, id[:6], id, false)
-	assertIndexGet(t, index, id[:4], id, false)
-	assertIndexGet(t, index, id[:1], id, false)
-
-	// non-conflicting substrings should still not conflict
-	assertIndexGet(t, index, id[:7], id, false)
-	assertIndexGet(t, index, id[:15], id, false)
-	assertIndexGet(t, index, id, id, false)
+	output = string(data)
+	return
 }
 
-func assertIndexGet(t *testing.T, index *TruncIndex, input, expectedResult string, expectError bool) {
-	if result, err := index.Get(input); err != nil && !expectError {
-		t.Fatalf("Unexpected error getting '%s': %s", input, err)
-	} else if err == nil && expectError {
-		t.Fatalf("Getting '%s' should return an error", input)
-	} else if result != expectedResult {
-		t.Fatalf("Getting '%s' returned '%s' instead of '%s'", input, result, expectedResult)
+func TestCompareConfig(t *testing.T) {
+	volumes1 := make(map[string]struct{})
+	volumes1["/test1"] = struct{}{}
+	config1 := Config{
+		Dns:         []string{"1.1.1.1", "2.2.2.2"},
+		PortSpecs:   []string{"1111:1111", "2222:2222"},
+		Env:         []string{"VAR1=1", "VAR2=2"},
+		VolumesFrom: "11111111",
+		Volumes:     volumes1,
+	}
+	config2 := Config{
+		Dns:         []string{"0.0.0.0", "2.2.2.2"},
+		PortSpecs:   []string{"1111:1111", "2222:2222"},
+		Env:         []string{"VAR1=1", "VAR2=2"},
+		VolumesFrom: "11111111",
+		Volumes:     volumes1,
+	}
+	config3 := Config{
+		Dns:         []string{"1.1.1.1", "2.2.2.2"},
+		PortSpecs:   []string{"0000:0000", "2222:2222"},
+		Env:         []string{"VAR1=1", "VAR2=2"},
+		VolumesFrom: "11111111",
+		Volumes:     volumes1,
+	}
+	config4 := Config{
+		Dns:         []string{"1.1.1.1", "2.2.2.2"},
+		PortSpecs:   []string{"0000:0000", "2222:2222"},
+		Env:         []string{"VAR1=1", "VAR2=2"},
+		VolumesFrom: "22222222",
+		Volumes:     volumes1,
+	}
+	volumes2 := make(map[string]struct{})
+	volumes2["/test2"] = struct{}{}
+	config5 := Config{
+		Dns:         []string{"1.1.1.1", "2.2.2.2"},
+		PortSpecs:   []string{"0000:0000", "2222:2222"},
+		Env:         []string{"VAR1=1", "VAR2=2"},
+		VolumesFrom: "11111111",
+		Volumes:     volumes2,
+	}
+	if CompareConfig(&config1, &config2) {
+		t.Fatalf("CompareConfig should return false, Dns are different")
+	}
+	if CompareConfig(&config1, &config3) {
+		t.Fatalf("CompareConfig should return false, PortSpecs are different")
+	}
+	if CompareConfig(&config1, &config4) {
+		t.Fatalf("CompareConfig should return false, VolumesFrom are different")
+	}
+	if CompareConfig(&config1, &config5) {
+		t.Fatalf("CompareConfig should return false, Volumes are different")
+	}
+	if !CompareConfig(&config1, &config1) {
+		t.Fatalf("CompareConfig should return true")
 	}
 }
 
-func assertKernelVersion(t *testing.T, a, b *KernelVersionInfo, result int) {
-	if r := CompareKernelVersion(a, b); r != result {
-		t.Fatalf("Unepected kernel version comparaison result. Found %d, expected %d", r, result)
+func TestMergeConfig(t *testing.T) {
+	volumesImage := make(map[string]struct{})
+	volumesImage["/test1"] = struct{}{}
+	volumesImage["/test2"] = struct{}{}
+	configImage := &Config{
+		Dns:         []string{"1.1.1.1", "2.2.2.2"},
+		PortSpecs:   []string{"1111:1111", "2222:2222"},
+		Env:         []string{"VAR1=1", "VAR2=2"},
+		VolumesFrom: "1111",
+		Volumes:     volumesImage,
+	}
+
+	volumesUser := make(map[string]struct{})
+	volumesUser["/test3"] = struct{}{}
+	configUser := &Config{
+		Dns:       []string{"3.3.3.3"},
+		PortSpecs: []string{"3333:2222", "3333:3333"},
+		Env:       []string{"VAR2=3", "VAR3=3"},
+		Volumes:   volumesUser,
+	}
+
+	MergeConfig(configUser, configImage)
+
+	if len(configUser.Dns) != 3 {
+		t.Fatalf("Expected 3 dns, 1.1.1.1, 2.2.2.2 and 3.3.3.3, found %d", len(configUser.Dns))
+	}
+	for _, dns := range configUser.Dns {
+		if dns != "1.1.1.1" && dns != "2.2.2.2" && dns != "3.3.3.3" {
+			t.Fatalf("Expected 1.1.1.1 or 2.2.2.2 or 3.3.3.3, found %s", dns)
+		}
+	}
+
+	if len(configUser.PortSpecs) != 3 {
+		t.Fatalf("Expected 3 portSpecs, 1111:1111, 3333:2222 and 3333:3333, found %d", len(configUser.PortSpecs))
+	}
+	for _, portSpecs := range configUser.PortSpecs {
+		if portSpecs != "1111:1111" && portSpecs != "3333:2222" && portSpecs != "3333:3333" {
+			t.Fatalf("Expected 1111:1111 or 3333:2222 or 3333:3333, found %s", portSpecs)
+		}
+	}
+	if len(configUser.Env) != 3 {
+		t.Fatalf("Expected 3 env var, VAR1=1, VAR2=3 and VAR3=3, found %d", len(configUser.Env))
+	}
+	for _, env := range configUser.Env {
+		if env != "VAR1=1" && env != "VAR2=3" && env != "VAR3=3" {
+			t.Fatalf("Expected VAR1=1 or VAR2=3 or VAR3=3, found %s", env)
+		}
+	}
+
+	if len(configUser.Volumes) != 3 {
+		t.Fatalf("Expected 3 volumes, /test1, /test2 and /test3, found %d", len(configUser.Volumes))
+	}
+	for v := range configUser.Volumes {
+		if v != "/test1" && v != "/test2" && v != "/test3" {
+			t.Fatalf("Expected /test1 or /test2 or /test3, found %s", v)
+		}
+	}
+
+	if configUser.VolumesFrom != "1111" {
+		t.Fatalf("Expected VolumesFrom to be 1111, found %s", configUser.VolumesFrom)
 	}
 }
 
-func TestCompareKernelVersion(t *testing.T) {
-	assertKernelVersion(t,
-		&KernelVersionInfo{Kernel: 3, Major: 8, Minor: 0},
-		&KernelVersionInfo{Kernel: 3, Major: 8, Minor: 0},
-		0)
-	assertKernelVersion(t,
-		&KernelVersionInfo{Kernel: 2, Major: 6, Minor: 0},
-		&KernelVersionInfo{Kernel: 3, Major: 8, Minor: 0},
-		-1)
-	assertKernelVersion(t,
-		&KernelVersionInfo{Kernel: 3, Major: 8, Minor: 0},
-		&KernelVersionInfo{Kernel: 2, Major: 6, Minor: 0},
-		1)
-	assertKernelVersion(t,
-		&KernelVersionInfo{Kernel: 3, Major: 8, Minor: 0, Flavor: "0"},
-		&KernelVersionInfo{Kernel: 3, Major: 8, Minor: 0, Flavor: "16"},
-		0)
-	assertKernelVersion(t,
-		&KernelVersionInfo{Kernel: 3, Major: 8, Minor: 5},
-		&KernelVersionInfo{Kernel: 3, Major: 8, Minor: 0},
-		1)
-	assertKernelVersion(t,
-		&KernelVersionInfo{Kernel: 3, Major: 0, Minor: 20, Flavor: "25"},
-		&KernelVersionInfo{Kernel: 3, Major: 8, Minor: 0, Flavor: "0"},
-		-1)
+func TestMergeConfigPublicPortNotHonored(t *testing.T) {
+	volumesImage := make(map[string]struct{})
+	volumesImage["/test1"] = struct{}{}
+	volumesImage["/test2"] = struct{}{}
+	configImage := &Config{
+		Dns:       []string{"1.1.1.1", "2.2.2.2"},
+		PortSpecs: []string{"1111", "2222"},
+		Env:       []string{"VAR1=1", "VAR2=2"},
+		Volumes:   volumesImage,
+	}
+
+	volumesUser := make(map[string]struct{})
+	volumesUser["/test3"] = struct{}{}
+	configUser := &Config{
+		Dns:       []string{"3.3.3.3"},
+		PortSpecs: []string{"1111:3333"},
+		Env:       []string{"VAR2=3", "VAR3=3"},
+		Volumes:   volumesUser,
+	}
+
+	MergeConfig(configUser, configImage)
+
+	contains := func(a []string, expect string) bool {
+		for _, p := range a {
+			if p == expect {
+				return true
+			}
+		}
+		return false
+	}
+
+	if !contains(configUser.PortSpecs, "2222") {
+		t.Logf("Expected '2222' Ports: %v", configUser.PortSpecs)
+		t.Fail()
+	}
+
+	if !contains(configUser.PortSpecs, "1111:3333") {
+		t.Logf("Expected '1111:3333' Ports: %v", configUser.PortSpecs)
+		t.Fail()
+	}
 }

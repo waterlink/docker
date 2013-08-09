@@ -1,10 +1,10 @@
-:title: docker documentation
-:description: -- todo: change me
-:keywords: todo: change me
+:title: Overview
+:description: Docker documentation summary
+:keywords: concepts, documentation, docker, containers
 
 
 
-Concepts
+Overview
 ========
 
 Contents:
@@ -12,6 +12,5 @@ Contents:
 .. toctree::
    :maxdepth: 1
 
-   introduction
-   buildingblocks
-
+   ../index
+   manifesto

@@ -1,40 +1,59 @@
+:title: Upgrading
+:description: These instructions are for upgrading Docker
+:keywords: Docker, Docker documentation, upgrading docker, upgrade
+
 .. _upgrading:
 
 Upgrading
 ============
 
-These instructions are for upgrading your Docker binary for when you had a custom (non package manager) installation.
-If you istalled docker using apt-get, use that to upgrade.
+**These instructions are for upgrading Docker**
 
 
-Get the latest docker binary:
+After normal installation
+-------------------------
 
-::
+If you installed Docker normally using apt-get or used Vagrant, use apt-get to upgrade.
 
-  wget http://get.docker.io/builds/$(uname -s)/$(uname -m)/docker-master.tgz
+.. code-block:: bash
 
+   # update your sources list
+   sudo apt-get update
 
-
-Unpack it to your current dir
-
-::
-
-   tar -xf docker-master.tgz
-
-
-Stop your current daemon. How you stop your daemon depends on how you started it.
-
-- If you started the daemon manually (``sudo docker -d``), you can just kill the process: ``killall docker``
-- If the process was started using upstart (the ubuntu startup daemon), you may need to use that to stop it
+   # install the latest
+   sudo apt-get install lxc-docker
 
 
-Start docker in daemon mode (-d) and disconnect (&) starting ./docker will start the version in your current dir rather
-than the one in your PATH.
+After manual installation
+-------------------------
 
-Now start the daemon
+If you installed the Docker binary
 
-::
 
+.. code-block:: bash
+
+   # kill the running docker daemon
+   killall docker
+
+
+.. code-block:: bash
+
+   # get the latest binary
+   wget http://get.docker.io/builds/Linux/x86_64/docker-latest.tgz
+
+
+.. code-block:: bash
+
+   # Unpack it to your current dir
+   tar -xf docker-latest.tgz
+
+
+Start docker in daemon mode (-d) and disconnect (&) starting ./docker will start the version in your current dir rather than a version which
+might reside in your path.
+
+.. code-block:: bash
+
+   # start the new version
    sudo ./docker -d &
 
 

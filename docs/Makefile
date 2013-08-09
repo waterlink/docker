@@ -6,6 +6,7 @@ SPHINXOPTS    =
 SPHINXBUILD   = sphinx-build
 PAPER         =
 BUILDDIR      = _build
+PYTHON        = python
 
 # Internal variables.
 PAPEROPT_a4     = -D latex_paper_size=a4
@@ -38,37 +39,36 @@ help:
 #	@echo "  linkcheck  to check all external links for integrity"
 #	@echo "  doctest    to run all doctests embedded in the documentation (if enabled)"
 	@echo "  docs       to build the docs and copy the static files to the outputdir"
+	@echo "  server     to serve the docs in your browser under \`http://localhost:8000\`"
 	@echo "  publish    to publish the app to dotcloud"
 
 clean:
 	-rm -rf $(BUILDDIR)/*
 
 docs:
-	-rm -rf $(BUILDDIR)/*
 	$(SPHINXBUILD) -b dirhtml $(ALLSPHINXOPTS) $(BUILDDIR)/html
-	cp sources/index.html $(BUILDDIR)/html/
-	cp -r sources/gettingstarted $(BUILDDIR)/html/
-	cp sources/dotcloud.yml $(BUILDDIR)/html/
-	cp sources/CNAME $(BUILDDIR)/html/
-	cp sources/.nojekyll $(BUILDDIR)/html/
-	cp sources/nginx.conf $(BUILDDIR)/html/
 	@echo
-	@echo "Build finished. The HTML pages are in $(BUILDDIR)/html."
+	@echo "Build finished. The documentation pages are now in $(BUILDDIR)/html."
+
+server: docs
+	@cd $(BUILDDIR)/html; $(PYTHON) -m SimpleHTTPServer 8000
+
+site:
+	cp -r website $(BUILDDIR)/
+	cp -r theme/docker/static/ $(BUILDDIR)/website/
+	@echo
+	@echo "The Website pages are in $(BUILDDIR)/site."
 
 connect:
-	@echo pushing changes to staging site
-	@cd _build/html/ ; \
-	@dotcloud list ; \
-	dotcloud connect dockerwebsite
+	@echo connecting dotcloud to www.docker.io website, make sure to use user 1
+	@echo or create your own "dockerwebsite" app
+	@cd $(BUILDDIR)/website/ ; \
+	dotcloud connect dockerwebsite ; \
+	dotcloud list
 
 push:
-	@cd _build/html/ ; \
+	@cd $(BUILDDIR)/website/ ; \
 	dotcloud push
-
-github-deploy: docs
-	rm -fr github-deploy
-	git clone ssh://git@github.com/dotcloud/docker github-deploy
-	cd github-deploy && git checkout -f gh-pages && git rm -r * && rsync -avH ../_build/html/ ./ && touch .nojekyll && echo "docker.io" > CNAME && git add * && git commit -m "Updating docs"
 
 $(VERSIONS):
 	@echo "Hello world"

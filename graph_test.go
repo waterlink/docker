@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"errors"
+	"github.com/dotcloud/docker/utils"
 	"io"
 	"io/ioutil"
 	"os"
@@ -33,14 +34,14 @@ func TestInterruptedRegister(t *testing.T) {
 	defer os.RemoveAll(graph.Root)
 	badArchive, w := io.Pipe() // Use a pipe reader as a fake archive which never yields data
 	image := &Image{
-		Id:      GenerateId(),
+		ID:      GenerateID(),
 		Comment: "testing",
 		Created: time.Now(),
 	}
-	go graph.Register(badArchive, image)
+	go graph.Register(nil, badArchive, image)
 	time.Sleep(200 * time.Millisecond)
 	w.CloseWithError(errors.New("But I'm not a tarball!")) // (Nobody's perfect, darling)
-	if _, err := graph.Get(image.Id); err == nil {
+	if _, err := graph.Get(image.ID); err == nil {
 		t.Fatal("Image should not exist after Register is interrupted")
 	}
 	// Registering the same image again should succeed if the first register was interrupted
@@ -48,7 +49,7 @@ func TestInterruptedRegister(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := graph.Register(goodArchive, image); err != nil {
+	if err := graph.Register(nil, goodArchive, image); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -62,11 +63,11 @@ func TestGraphCreate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	image, err := graph.Create(archive, nil, "Testing", "")
+	image, err := graph.Create(archive, nil, "Testing", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateId(image.Id); err != nil {
+	if err := ValidateID(image.ID); err != nil {
 		t.Fatal(err)
 	}
 	if image.Comment != "Testing" {
@@ -90,11 +91,11 @@ func TestRegister(t *testing.T) {
 		t.Fatal(err)
 	}
 	image := &Image{
-		Id:      GenerateId(),
+		ID:      GenerateID(),
 		Comment: "testing",
 		Created: time.Now(),
 	}
-	err = graph.Register(archive, image)
+	err = graph.Register(nil, archive, image)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,11 +104,11 @@ func TestRegister(t *testing.T) {
 	} else if l := len(images); l != 1 {
 		t.Fatalf("Wrong number of images. Should be %d, not %d", 1, l)
 	}
-	if resultImg, err := graph.Get(image.Id); err != nil {
+	if resultImg, err := graph.Get(image.ID); err != nil {
 		t.Fatal(err)
 	} else {
-		if resultImg.Id != image.Id {
-			t.Fatalf("Wrong image ID. Should be '%s', not '%s'", image.Id, resultImg.Id)
+		if resultImg.ID != image.ID {
+			t.Fatalf("Wrong image ID. Should be '%s', not '%s'", image.ID, resultImg.ID)
 		}
 		if resultImg.Comment != image.Comment {
 			t.Fatalf("Wrong image comment. Should be '%s', not '%s'", image.Comment, resultImg.Comment)
@@ -122,7 +123,7 @@ func TestMount(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	image, err := graph.Create(archive, nil, "Testing", "")
+	image, err := graph.Create(archive, nil, "Testing", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +156,7 @@ func TestDeletePrefix(t *testing.T) {
 	graph := tempGraph(t)
 	defer os.RemoveAll(graph.Root)
 	img := createTestImage(graph, t)
-	if err := graph.Delete(TruncateId(img.Id)); err != nil {
+	if err := graph.Delete(utils.TruncateID(img.ID)); err != nil {
 		t.Fatal(err)
 	}
 	assertNImages(graph, t, 0)
@@ -166,7 +167,7 @@ func createTestImage(graph *Graph, t *testing.T) *Image {
 	if err != nil {
 		t.Fatal(err)
 	}
-	img, err := graph.Create(archive, nil, "Test image", "")
+	img, err := graph.Create(archive, nil, "Test image", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,26 +182,34 @@ func TestDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertNImages(graph, t, 0)
-	img, err := graph.Create(archive, nil, "Bla bla", "")
+	img, err := graph.Create(archive, nil, "Bla bla", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertNImages(graph, t, 1)
-	if err := graph.Delete(img.Id); err != nil {
+	if err := graph.Delete(img.ID); err != nil {
 		t.Fatal(err)
 	}
 	assertNImages(graph, t, 0)
 
-	// Test 2 create (same name) / 1 delete
-	img1, err := graph.Create(archive, nil, "Testing", "")
+	archive, err = fakeTar()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = graph.Create(archive, nil, "Testing", ""); err != nil {
+	// Test 2 create (same name) / 1 delete
+	img1, err := graph.Create(archive, nil, "Testing", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive, err = fakeTar()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = graph.Create(archive, nil, "Testing", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	assertNImages(graph, t, 2)
-	if err := graph.Delete(img1.Id); err != nil {
+	if err := graph.Delete(img1.ID); err != nil {
 		t.Fatal(err)
 	}
 	assertNImages(graph, t, 1)
@@ -211,11 +220,15 @@ func TestDelete(t *testing.T) {
 	}
 	assertNImages(graph, t, 1)
 
-	// Test delete twice (pull -> rm -> pull -> rm)
-	if err := graph.Register(archive, img1); err != nil {
+	archive, err = fakeTar()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := graph.Delete(img1.Id); err != nil {
+	// Test delete twice (pull -> rm -> pull -> rm)
+	if err := graph.Register(nil, archive, img1); err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.Delete(img1.ID); err != nil {
 		t.Fatal(err)
 	}
 	assertNImages(graph, t, 1)
