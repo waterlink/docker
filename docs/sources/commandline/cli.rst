@@ -4,7 +4,7 @@
 
 .. _cli:
 
-Command Line Interface
+Overview
 ======================
 
 Docker Usage
@@ -14,7 +14,8 @@ To list available commands, either run ``docker`` with no parameters or execute
 ``docker help``::
 
   $ docker
-    Usage: docker COMMAND [arg...]
+    Usage: docker [OPTIONS] COMMAND [arg...]
+      -H=[tcp://127.0.0.1:4243]: tcp://host:port to bind/connect to or unix://path/to/socket to use
 
     A self-sufficient runtime for linux containers.
 
@@ -24,10 +25,12 @@ Available Commands
 ~~~~~~~~~~~~~~~~~~
 
 .. toctree::
-   :maxdepth: 1
+   :maxdepth: 2
 
    command/attach
+   command/build
    command/commit
+   command/cp
    command/diff
    command/export
    command/history
@@ -46,8 +49,10 @@ Available Commands
    command/rm
    command/rmi
    command/run
+   command/search
    command/start
    command/stop
    command/tag
+   command/top
    command/version
    command/wait

@@ -1,21 +1,36 @@
-:title: docker documentation
-:description: docker documentation
-:keywords:
+:title: Welcome to the Docker Documentation
+:description: An overview of the Docker Documentation
+:keywords: containers, lxc, concepts, explanation
 
-Documentation
-=============
+Welcome
+=======
 
-This documentation has the following resources:
+.. image:: concepts/images/dockerlogo-h.png
 
-.. toctree::
-   :maxdepth: 1
+``docker``, the Linux Container Runtime, runs Unix processes with
+strong guarantees of isolation across servers. Your software runs
+repeatably everywhere because its :ref:`container_def` includes any
+dependencies.
 
-   concepts/index
-   installation/index
-   examples/index
-   contributing/index
-   commandline/index
-   faq
+``docker`` runs three ways:
 
+* as a daemon to manage LXC containers on your :ref:`Linux host
+  <kernel>` (``sudo docker -d``)
+* as a :ref:`CLI <cli>` which talks to the daemon's `REST API
+  <api/docker_remote_api>`_ (``docker run ...``)
+* as a client of :ref:`Repositories <working_with_the_repository>`
+  that let you share what you've built (``docker pull, docker
+  commit``).
 
-.. image:: http://www.docker.io/_static/lego_docker.jpg
+Each use of ``docker`` is documented here. The features of Docker are
+currently in active development, so this documention will change
+frequently.
+
+For an overview of Docker, please see the `Introduction
+<http://www.docker.io>`_. When you're ready to start working with
+Docker, we have a `quick start <http://www.docker.io/gettingstarted>`_
+and a more in-depth guide to :ref:`ubuntu_linux` and other
+:ref:`installation_list` paths including prebuilt binaries,
+Vagrant-created VMs, Rackspace and Amazon instances.
+
+Enough reading! :ref:`Try it out! <running_examples>`

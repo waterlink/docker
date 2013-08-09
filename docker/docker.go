@@ -4,23 +4,22 @@ import (
 	"flag"
 	"fmt"
 	"github.com/dotcloud/docker"
-	"github.com/dotcloud/docker/rcli"
-	"github.com/dotcloud/docker/term"
-	"io"
+	"github.com/dotcloud/docker/utils"
 	"io/ioutil"
 	"log"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 )
 
 var (
-	GIT_COMMIT string
+	GITCOMMIT string
 )
 
 func main() {
-	if docker.SelfPath() == "/sbin/init" {
+	if selfPath := utils.SelfPath(); selfPath == "/sbin/init" || selfPath == "/.dockerinit" {
 		// Running in init mode
 		docker.SysInit()
 		return
@@ -28,9 +27,22 @@ func main() {
 	// FIXME: Switch d and D ? (to be more sshd like)
 	flDaemon := flag.Bool("d", false, "Daemon mode")
 	flDebug := flag.Bool("D", false, "Debug mode")
-	bridgeName := flag.String("b", "", "Attach containers to a pre-existing network bridge")
+	flAutoRestart := flag.Bool("r", false, "Restart previously running containers")
+	bridgeName := flag.String("b", "", "Attach containers to a pre-existing network bridge. Use 'none' to disable container networking")
 	pidfile := flag.String("p", "/var/run/docker.pid", "File containing process PID")
+	flGraphPath := flag.String("g", "/var/lib/docker", "Path to graph storage base dir.")
+	flEnableCors := flag.Bool("api-enable-cors", false, "Enable CORS requests in the remote api.")
+	flDns := flag.String("dns", "", "Set custom dns servers")
+	flHosts := docker.ListOpts{fmt.Sprintf("unix://%s", docker.DEFAULTUNIXSOCKET)}
+	flag.Var(&flHosts, "H", "tcp://host:port to bind/connect to or unix://path/to/socket to use")
 	flag.Parse()
+	if len(flHosts) > 1 {
+		flHosts = flHosts[1:] //trick to display a nice defaul value in the usage
+	}
+	for i, flHost := range flHosts {
+		flHosts[i] = utils.ParseHost(docker.DEFAULTHTTPHOST, docker.DEFAULTHTTPPORT, flHost)
+	}
+
 	if *bridgeName != "" {
 		docker.NetworkBridgeIface = *bridgeName
 	} else {
@@ -39,18 +51,25 @@ func main() {
 	if *flDebug {
 		os.Setenv("DEBUG", "1")
 	}
-	docker.GIT_COMMIT = GIT_COMMIT
+	docker.GITCOMMIT = GITCOMMIT
 	if *flDaemon {
 		if flag.NArg() != 0 {
 			flag.Usage()
 			return
 		}
-		if err := daemon(*pidfile); err != nil {
+		if err := daemon(*pidfile, *flGraphPath, flHosts, *flAutoRestart, *flEnableCors, *flDns); err != nil {
 			log.Fatal(err)
+			os.Exit(-1)
 		}
 	} else {
-		if err := runCommand(flag.Args()); err != nil {
+		if len(flHosts) > 1 {
+			log.Fatal("Please specify only one -H")
+			return
+		}
+		protoAddrParts := strings.SplitN(flHosts[0], "://", 2)
+		if err := docker.ParseCommands(protoAddrParts[0], protoAddrParts[1], flag.Args()...); err != nil {
 			log.Fatal(err)
+			os.Exit(-1)
 		}
 	}
 }
@@ -82,7 +101,7 @@ func removePidFile(pidfile string) {
 	}
 }
 
-func daemon(pidfile string) error {
+func daemon(pidfile string, flGraphPath string, protoAddrs []string, autoRestart, enableCors bool, flDns string) error {
 	if err := createPidFile(pidfile); err != nil {
 		log.Fatal(err)
 	}
@@ -96,51 +115,36 @@ func daemon(pidfile string) error {
 		removePidFile(pidfile)
 		os.Exit(0)
 	}()
-
-	service, err := docker.NewServer()
+	var dns []string
+	if flDns != "" {
+		dns = []string{flDns}
+	}
+	server, err := docker.NewServer(flGraphPath, autoRestart, enableCors, dns)
 	if err != nil {
 		return err
 	}
-	return rcli.ListenAndServe("tcp", "127.0.0.1:4242", service)
-}
-
-func runCommand(args []string) error {
-	// FIXME: we want to use unix sockets here, but net.UnixConn doesn't expose
-	// CloseWrite(), which we need to cleanly signal that stdin is closed without
-	// closing the connection.
-	// See http://code.google.com/p/go/issues/detail?id=3345
-	if conn, err := rcli.Call("tcp", "127.0.0.1:4242", args...); err == nil {
-		options := conn.GetOptions()
-		if options.RawTerminal &&
-			term.IsTerminal(int(os.Stdin.Fd())) &&
-			os.Getenv("NORAW") == "" {
-			if oldState, err := rcli.SetRawTerminal(); err != nil {
-				return err
-			} else {
-				defer rcli.RestoreTerminal(oldState)
+	chErrors := make(chan error, len(protoAddrs))
+	for _, protoAddr := range protoAddrs {
+		protoAddrParts := strings.SplitN(protoAddr, "://", 2)
+		if protoAddrParts[0] == "unix" {
+			syscall.Unlink(protoAddrParts[1])
+		} else if protoAddrParts[0] == "tcp" {
+			if !strings.HasPrefix(protoAddrParts[1], "127.0.0.1") {
+				log.Println("/!\\ DON'T BIND ON ANOTHER IP ADDRESS THAN 127.0.0.1 IF YOU DON'T KNOW WHAT YOU'RE DOING /!\\")
 			}
+		} else {
+			log.Fatal("Invalid protocol format.")
+			os.Exit(-1)
 		}
-		receiveStdout := docker.Go(func() error {
-			_, err := io.Copy(os.Stdout, conn)
-			return err
-		})
-		sendStdin := docker.Go(func() error {
-			_, err := io.Copy(conn, os.Stdin)
-			if err := conn.CloseWrite(); err != nil {
-				log.Printf("Couldn't send EOF: " + err.Error())
-			}
-			return err
-		})
-		if err := <-receiveStdout; err != nil {
+		go func() {
+			chErrors <- docker.ListenAndServe(protoAddrParts[0], protoAddrParts[1], server, true)
+		}()
+	}
+	for i := 0; i < len(protoAddrs); i += 1 {
+		err := <-chErrors
+		if err != nil {
 			return err
 		}
-		if !term.IsTerminal(int(os.Stdin.Fd())) {
-			if err := <-sendStdin; err != nil {
-				return err
-			}
-		}
-	} else {
-		return fmt.Errorf("Can't connect to docker daemon. Is 'docker -d' running on this host?")
 	}
 	return nil
 }

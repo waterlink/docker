@@ -20,12 +20,27 @@ import sys, os
 
 # -- General configuration -----------------------------------------------------
 
+
+
+# Additional templates that should be rendered to pages, maps page names to
+# template names.
+# the 'redirect_home.html' page redirects using a http meta refresh which, according
+# to official sources is more or less equivalent of a 301.
+
+html_additional_pages = {
+    'concepts/containers': 'redirect_home.html',
+    'concepts/introduction': 'redirect_home.html',
+    'builder/basics': 'redirect_build.html',
+    }
+
+
+
 # If your documentation needs a minimal Sphinx version, state it here.
 #needs_sphinx = '1.0'
 
 # Add any Sphinx extension module names here, as strings. They can be extensions
 # coming with Sphinx (named 'sphinx.ext.*') or your custom ones.
-extensions = []
+extensions = ['sphinxcontrib.httpdomain']
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
@@ -41,7 +56,7 @@ html_add_permalinks = None
 
 
 # The master toctree document.
-master_doc = 'index'
+master_doc = 'toctree'
 
 # General information about the project.
 project = u'Docker'
@@ -120,7 +135,11 @@ html_theme_path = ['../theme']
 # The name of an image file (within the static path) to use as favicon of the
 # docs.  This file should be a Windows icon file (.ico) being 16x16 or 32x32
 # pixels large.
-#html_favicon = None
+
+# We use a png favicon. This is not compatible with internet explorer, but looks
+# much better on all other browsers. However, sphynx doesn't like it (it likes
+# .ico better) so we have just put it in the template rather than used this setting
+# html_favicon = 'favicon.png'
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
@@ -137,10 +156,6 @@ html_static_path = ['static_files']
 
 # Custom sidebar templates, maps document names to template names.
 #html_sidebars = {}
-
-# Additional templates that should be rendered to pages, maps page names to
-# template names.
-#html_additional_pages = {}
 
 # If false, no module index is generated.
 #html_domain_indices = True
@@ -188,7 +203,7 @@ latex_elements = {
 # Grouping the document tree into LaTeX files. List of tuples
 # (source start file, target name, title, author, documentclass [howto/manual]).
 latex_documents = [
-  ('index', 'Docker.tex', u'Docker Documentation',
+  ('toctree', 'Docker.tex', u'Docker Documentation',
    u'Team Docker', 'manual'),
 ]
 
@@ -218,7 +233,7 @@ latex_documents = [
 # One entry per manual page. List of tuples
 # (source start file, name, description, authors, manual section).
 man_pages = [
-    ('index', 'docker', u'Docker Documentation',
+    ('toctree', 'docker', u'Docker Documentation',
      [u'Team Docker'], 1)
 ]
 
@@ -232,7 +247,7 @@ man_pages = [
 # (source start file, target name, title, author,
 #  dir menu entry, description, category)
 texinfo_documents = [
-  ('index', 'Docker', u'Docker Documentation',
+  ('toctree', 'Docker', u'Docker Documentation',
    u'Team Docker', 'Docker', 'One line description of project.',
    'Miscellaneous'),
 ]

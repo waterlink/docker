@@ -2,6 +2,7 @@ package docker
 
 import (
 	"fmt"
+	"github.com/dotcloud/docker/utils"
 	"io"
 	"io/ioutil"
 	"os"
@@ -14,7 +15,7 @@ import (
 // A Graph is a store for versioned filesystem images and the relationship between them.
 type Graph struct {
 	Root    string
-	idIndex *TruncIndex
+	idIndex *utils.TruncIndex
 }
 
 // NewGraph instantiates a new graph at the given root path in the filesystem.
@@ -25,12 +26,12 @@ func NewGraph(root string) (*Graph, error) {
 		return nil, err
 	}
 	// Create the root directory if it doesn't exists
-	if err := os.Mkdir(root, 0700); err != nil && !os.IsExist(err) {
+	if err := os.MkdirAll(root, 0700); err != nil && !os.IsExist(err) {
 		return nil, err
 	}
 	graph := &Graph{
 		Root:    abspath,
-		idIndex: NewTruncIndex(),
+		idIndex: utils.NewTruncIndex(),
 	}
 	if err := graph.restore(); err != nil {
 		return nil, err
@@ -53,7 +54,7 @@ func (graph *Graph) restore() error {
 // FIXME: Implement error subclass instead of looking at the error text
 // Note: This is the way golang implements os.IsNotExists on Plan9
 func (graph *Graph) IsNotExist(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "does not exist")
+	return err != nil && (strings.Contains(err.Error(), "does not exist") || strings.Contains(err.Error(), "No such"))
 }
 
 // Exists returns true if an image is registered at the given id.
@@ -76,28 +77,39 @@ func (graph *Graph) Get(name string) (*Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	if img.Id != id {
-		return nil, fmt.Errorf("Image stored at '%s' has wrong id '%s'", id, img.Id)
+	if img.ID != id {
+		return nil, fmt.Errorf("Image stored at '%s' has wrong id '%s'", id, img.ID)
 	}
 	img.graph = graph
+	if img.Size == 0 {
+		root, err := img.root()
+		if err != nil {
+			return nil, err
+		}
+		if err := StoreSize(img, root); err != nil {
+			return nil, err
+		}
+	}
 	return img, nil
 }
 
 // Create creates a new image and registers it in the graph.
-func (graph *Graph) Create(layerData Archive, container *Container, comment, author string) (*Image, error) {
+func (graph *Graph) Create(layerData Archive, container *Container, comment, author string, config *Config) (*Image, error) {
 	img := &Image{
-		Id:            GenerateId(),
+		ID:            GenerateID(),
 		Comment:       comment,
 		Created:       time.Now(),
 		DockerVersion: VERSION,
 		Author:        author,
+		Config:        config,
+		Architecture:  "x86_64",
 	}
 	if container != nil {
 		img.Parent = container.Image
-		img.Container = container.Id
+		img.Container = container.ID
 		img.ContainerConfig = *container.Config
 	}
-	if err := graph.Register(layerData, img); err != nil {
+	if err := graph.Register(nil, layerData, img); err != nil {
 		return nil, err
 	}
 	return img, nil
@@ -105,28 +117,28 @@ func (graph *Graph) Create(layerData Archive, container *Container, comment, aut
 
 // Register imports a pre-existing image into the graph.
 // FIXME: pass img as first argument
-func (graph *Graph) Register(layerData Archive, img *Image) error {
-	if err := ValidateId(img.Id); err != nil {
+func (graph *Graph) Register(jsonData []byte, layerData Archive, img *Image) error {
+	if err := ValidateID(img.ID); err != nil {
 		return err
 	}
 	// (This is a convenience to save time. Race conditions are taken care of by os.Rename)
-	if graph.Exists(img.Id) {
-		return fmt.Errorf("Image %s already exists", img.Id)
+	if graph.Exists(img.ID) {
+		return fmt.Errorf("Image %s already exists", img.ID)
 	}
 	tmp, err := graph.Mktemp("")
 	defer os.RemoveAll(tmp)
 	if err != nil {
 		return fmt.Errorf("Mktemp failed: %s", err)
 	}
-	if err := StoreImage(img, layerData, tmp); err != nil {
+	if err := StoreImage(img, jsonData, layerData, tmp); err != nil {
 		return err
 	}
 	// Commit
-	if err := os.Rename(tmp, graph.imageRoot(img.Id)); err != nil {
+	if err := os.Rename(tmp, graph.imageRoot(img.ID)); err != nil {
 		return err
 	}
 	img.graph = graph
-	graph.idIndex.Add(img.Id)
+	graph.idIndex.Add(img.ID)
 	return nil
 }
 
@@ -134,7 +146,7 @@ func (graph *Graph) Register(layerData Archive, img *Image) error {
 //   The archive is stored on disk and will be automatically deleted as soon as has been read.
 //   If output is not nil, a human-readable progress bar will be written to it.
 //   FIXME: does this belong in Graph? How about MktempFile, let the caller use it for archives?
-func (graph *Graph) TempLayerArchive(id string, compression Compression, output io.Writer) (*TempArchive, error) {
+func (graph *Graph) TempLayerArchive(id string, compression Compression, sf *utils.StreamFormatter, output io.Writer) (*TempArchive, error) {
 	image, err := graph.Get(id)
 	if err != nil {
 		return nil, err
@@ -147,26 +159,57 @@ func (graph *Graph) TempLayerArchive(id string, compression Compression, output 
 	if err != nil {
 		return nil, err
 	}
-	return NewTempArchive(ProgressReader(ioutil.NopCloser(archive), 0, output, "Buffering to disk %v/%v (%v)"), tmp.Root)
+	return NewTempArchive(utils.ProgressReader(ioutil.NopCloser(archive), 0, output, sf.FormatProgress("", "Buffering to disk", "%v/%v (%v)"), sf, true), tmp.Root)
 }
 
 // Mktemp creates a temporary sub-directory inside the graph's filesystem.
 func (graph *Graph) Mktemp(id string) (string, error) {
 	if id == "" {
-		id = GenerateId()
+		id = GenerateID()
 	}
 	tmp, err := graph.tmp()
 	if err != nil {
 		return "", fmt.Errorf("Couldn't create temp: %s", err)
 	}
 	if tmp.Exists(id) {
-		return "", fmt.Errorf("Image %d already exists", id)
+		return "", fmt.Errorf("Image %s already exists", id)
 	}
 	return tmp.imageRoot(id), nil
 }
 
+// getDockerInitLayer returns the path of a layer containing a mountpoint suitable
+// for bind-mounting dockerinit into the container. The mountpoint is simply an
+// empty file at /.dockerinit
+//
+// This extra layer is used by all containers as the top-most ro layer. It protects
+// the container from unwanted side-effects on the rw layer.
+func (graph *Graph) getDockerInitLayer() (string, error) {
+	tmp, err := graph.tmp()
+	if err != nil {
+		return "", err
+	}
+	initLayer := tmp.imageRoot("_dockerinit")
+	if err := os.Mkdir(initLayer, 0755); err != nil && !os.IsExist(err) {
+		// If directory already existed, keep going.
+		// For all other errors, abort.
+		return "", err
+	}
+	// FIXME: how the hell do I break down this line in a way
+	// that is idiomatic and not ugly as hell?
+	if f, err := os.OpenFile(path.Join(initLayer, ".dockerinit"), os.O_CREATE|os.O_TRUNC, 0700); err != nil && !os.IsExist(err) {
+		// If file already existed, keep going.
+		// For all other errors, abort.
+		return "", err
+	} else {
+		f.Close()
+	}
+	// Layer is ready to use, if it wasn't before.
+	return initLayer, nil
+}
+
 func (graph *Graph) tmp() (*Graph, error) {
-	return NewGraph(path.Join(graph.Root, ":tmp:"))
+	// Changed to _tmp from :tmp:, because it messed with ":" separators in aufs branch syntax...
+	return NewGraph(path.Join(graph.Root, "_tmp"))
 }
 
 // Check if given error is "not empty".
@@ -210,7 +253,7 @@ func (graph *Graph) Map() (map[string]*Image, error) {
 	}
 	images := make(map[string]*Image, len(all))
 	for _, image := range all {
-		images[image.Id] = image
+		images[image.ID] = image
 	}
 	return images, nil
 }
@@ -249,14 +292,14 @@ func (graph *Graph) WalkAll(handler func(*Image)) error {
 func (graph *Graph) ByParent() (map[string][]*Image, error) {
 	byParent := make(map[string][]*Image)
 	err := graph.WalkAll(func(image *Image) {
-		image, err := graph.Get(image.Parent)
+		parent, err := graph.Get(image.Parent)
 		if err != nil {
 			return
 		}
-		if children, exists := byParent[image.Parent]; exists {
-			byParent[image.Parent] = []*Image{image}
+		if children, exists := byParent[parent.ID]; exists {
+			byParent[parent.ID] = []*Image{image}
 		} else {
-			byParent[image.Parent] = append(children, image)
+			byParent[parent.ID] = append(children, image)
 		}
 	})
 	return byParent, err
@@ -273,8 +316,8 @@ func (graph *Graph) Heads() (map[string]*Image, error) {
 	err = graph.WalkAll(func(image *Image) {
 		// If it's not in the byParent lookup table, then
 		// it's not a parent -> so it's a head!
-		if _, exists := byParent[image.Id]; !exists {
-			heads[image.Id] = image
+		if _, exists := byParent[image.ID]; !exists {
+			heads[image.ID] = image
 		}
 	})
 	return heads, err

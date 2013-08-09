@@ -4,8 +4,8 @@
 
 .. _running_redis_service:
 
-Create a redis service
-======================
+Redis Service
+=============
 
 .. include:: example_header.inc
 
@@ -34,7 +34,7 @@ Snapshot the installation
 
 .. code-block:: bash
 
-    docker ps -a  # grab the container id (this will be the last one in the list)
+    docker ps -a  # grab the container id (this will be the first one in the list)
     docker commit <container_id> <your username>/redis
 
 Run the service
@@ -72,7 +72,7 @@ Connect to the host os with the redis-cli.
 
     docker ps  # grab the new container id
     docker port <container_id> 6379  # grab the external port
-    ifconfig   # grab the host ip address
+    ip addr show   # grab the host ip address
     redis-cli -h <host ipaddress> -p <external port>
     redis 192.168.0.1:49153> set docker awesome
     OK
